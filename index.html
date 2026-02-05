@@ -183,6 +183,7 @@
 
         .category-filter {
             position: relative;
+            margin-bottom: 12px;
         }
 
         .category-filter select {
@@ -213,6 +214,79 @@
             background: var(--dark);
             color: white;
             padding: 10px;
+        }
+
+        .proxy-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 15px;
+            background: rgba(255, 0, 102, 0.1);
+            border: 1px solid rgba(255, 0, 102, 0.3);
+            border-radius: 12px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .proxy-toggle:hover {
+            background: rgba(255, 0, 102, 0.15);
+            border-color: rgba(255, 0, 102, 0.5);
+        }
+
+        .proxy-toggle.active {
+            background: rgba(0, 255, 136, 0.1);
+            border-color: rgba(0, 255, 136, 0.4);
+        }
+
+        .proxy-label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .proxy-icon {
+            font-size: 1.2rem;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            transition: all 0.3s ease;
+        }
+
+        .toggle-switch::before {
+            content: '';
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            top: 3px;
+            left: 3px;
+            background: white;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .proxy-toggle.active .toggle-switch {
+            background: var(--primary);
+        }
+
+        .proxy-toggle.active .toggle-switch::before {
+            left: 23px;
+        }
+
+        .proxy-info {
+            font-size: 0.7rem;
+            color: rgba(255, 255, 255, 0.4);
+            margin-top: 5px;
+            text-align: center;
+            line-height: 1.3;
         }
 
         .channels-count {
@@ -411,7 +485,7 @@
     <div class="container">
         <header>
             <h1>GASPO TV</h1>
-            <div class="tagline">CORDOBA</div>
+            <div class="tagline">Streaming the Future</div>
         </header>
 
         <div class="main-content">
@@ -424,6 +498,16 @@
                         <select id="categoryFilter">
                             <option value="">Todas las categorías</option>
                         </select>
+                    </div>
+                    <div class="proxy-toggle" id="proxyToggle">
+                        <div class="proxy-label">
+                            <span class="proxy-icon">🔒</span>
+                            <div>
+                                <div>Proxy HTTPS</div>
+                                <div class="proxy-info">Activa si hay problemas de carga en móvil</div>
+                            </div>
+                        </div>
+                        <div class="toggle-switch"></div>
                     </div>
                     <div class="channels-count" id="channelsCount">0 canales</div>
                 </div>
@@ -474,12 +558,22 @@
         let filteredChannels = [];
         let hls = null;
         let currentChannel = null;
+        let useProxy = false;
+
+        // Multiple proxy options with fallback
+        const PROXY_SERVICES = [
+            'https://corsproxy.io/?',
+            'https://api.allorigins.win/raw?url=',
+            'https://cors-anywhere.herokuapp.com/'
+        ];
+        let currentProxyIndex = 0;
 
         const videoPlayer = document.getElementById('videoPlayer');
         const channelsList = document.getElementById('channelsList');
         const searchInput = document.getElementById('searchInput');
         const categoryFilter = document.getElementById('categoryFilter');
         const channelsCount = document.getElementById('channelsCount');
+        const proxyToggle = document.getElementById('proxyToggle');
         const noChannel = document.getElementById('noChannel');
         const loading = document.getElementById('loading');
         const playerInfo = document.getElementById('playerInfo');
@@ -487,6 +581,38 @@
         const totalChannels = document.getElementById('totalChannels');
         const currentCategory = document.getElementById('currentCategory');
         const errorMessage = document.getElementById('errorMessage');
+
+        // Load proxy preference from localStorage
+        const savedProxyPreference = localStorage.getItem('useProxy');
+        if (savedProxyPreference === 'true') {
+            useProxy = true;
+            proxyToggle.classList.add('active');
+        }
+
+        // Proxy toggle functionality
+        proxyToggle.addEventListener('click', () => {
+            useProxy = !useProxy;
+            proxyToggle.classList.toggle('active');
+            localStorage.setItem('useProxy', useProxy);
+            
+            if (currentChannel) {
+                showError(`Proxy ${useProxy ? 'activado' : 'desactivado'}. Recarga el canal para aplicar cambios.`);
+            }
+        });
+
+        function getProxiedUrl(url) {
+            if (!useProxy || url.startsWith('https://')) {
+                return url;
+            }
+            
+            // Use current proxy service
+            return PROXY_SERVICES[currentProxyIndex] + encodeURIComponent(url);
+        }
+
+        function tryNextProxy() {
+            currentProxyIndex = (currentProxyIndex + 1) % PROXY_SERVICES.length;
+            console.log('Switching to proxy:', PROXY_SERVICES[currentProxyIndex]);
+        }
 
         // Debounce function for better performance
         function debounce(func, wait) {
@@ -537,6 +663,7 @@
                     currentChannel = { name, group };
                 } else if (line && !line.startsWith('#') && currentChannel.name) {
                     currentChannel.url = line;
+                    currentChannel.isHttp = line.startsWith('http://');
                     channels.push(currentChannel);
                     currentChannel = {};
                 }
@@ -588,9 +715,13 @@
             channelsToRender.forEach((channel, index) => {
                 const div = document.createElement('div');
                 div.className = 'channel-item';
+                
+                // Add visual indicator for HTTP channels
+                const indicator = channel.isHttp ? '<span style="color: #ff6b9d; margin-left: 5px;">⚠</span>' : '';
+                
                 div.innerHTML = `
                     <div class="channel-icon"></div>
-                    <div class="channel-name">${channel.name}</div>
+                    <div class="channel-name">${channel.name}${indicator}</div>
                 `;
                 div.addEventListener('click', () => playChannel(channel));
                 fragment.appendChild(div);
@@ -611,12 +742,20 @@
             
             // Update active state
             document.querySelectorAll('.channel-item').forEach(item => {
-                if (item.querySelector('.channel-name').textContent === channel.name) {
+                if (item.querySelector('.channel-name').textContent.includes(channel.name)) {
                     item.classList.add('active');
                 } else {
                     item.classList.remove('active');
                 }
             });
+
+            // Get the URL (proxied if needed)
+            const streamUrl = getProxiedUrl(channel.url);
+            
+            // Show info if using proxy
+            if (useProxy && channel.isHttp) {
+                console.log('Using proxy for HTTP stream:', streamUrl);
+            }
 
             // Play video
             if (Hls.isSupported()) {
@@ -627,10 +766,14 @@
                 hls = new Hls({
                     enableWorker: true,
                     lowLatencyMode: true,
-                    backBufferLength: 90
+                    backBufferLength: 90,
+                    xhrSetup: function(xhr, url) {
+                        // Add headers if needed
+                        xhr.withCredentials = false;
+                    }
                 });
                 
-                hls.loadSource(channel.url);
+                hls.loadSource(streamUrl);
                 hls.attachMedia(videoPlayer);
                 
                 hls.on(Hls.Events.MANIFEST_PARSED, function() {
@@ -640,27 +783,52 @@
                     currentCategory.textContent = channel.group;
                     videoPlayer.play().catch(e => {
                         console.error('Error playing video:', e);
-                        showError('Error al reproducir. Intenta con otro canal.');
+                        showError('Error al reproducir. Intenta activar el proxy o prueba con otro canal.');
                     });
                 });
                 
                 hls.on(Hls.Events.ERROR, function(event, data) {
                     if (data.fatal) {
                         loading.style.display = 'none';
-                        showError('No se pudo cargar este canal. Intenta con otro.');
+                        
+                        // Try next proxy if using proxy and not on last proxy
+                        if (useProxy && currentProxyIndex < PROXY_SERVICES.length - 1) {
+                            tryNextProxy();
+                            showError('Proxy falló, intentando con alternativa...');
+                            setTimeout(() => playChannel(channel), 1000);
+                        } else {
+                            if (channel.isHttp && !useProxy) {
+                                showError('⚠ Este canal usa HTTP. Intenta activar el Proxy HTTPS.');
+                            } else {
+                                showError('No se pudo cargar este canal. Intenta con otro.');
+                            }
+                        }
                     }
                 });
             } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
                 // Safari native HLS support
-                videoPlayer.src = channel.url;
+                videoPlayer.src = streamUrl;
                 videoPlayer.addEventListener('loadedmetadata', function() {
                     loading.style.display = 'none';
                     playerInfo.style.display = 'block';
                     currentChannelName.textContent = channel.name;
                     currentCategory.textContent = channel.group;
                     videoPlayer.play().catch(e => {
-                        showError('Error al reproducir. Intenta con otro canal.');
+                        if (channel.isHttp && !useProxy) {
+                            showError('⚠ Este canal usa HTTP. Intenta activar el Proxy HTTPS.');
+                        } else {
+                            showError('Error al reproducir. Intenta con otro canal.');
+                        }
                     });
+                });
+                
+                videoPlayer.addEventListener('error', function(e) {
+                    loading.style.display = 'none';
+                    if (channel.isHttp && !useProxy) {
+                        showError('⚠ Este canal usa HTTP. Intenta activar el Proxy HTTPS.');
+                    } else {
+                        showError('Error al cargar el canal.');
+                    }
                 });
             } else {
                 showError('Tu navegador no soporta streaming HLS.');
@@ -672,7 +840,7 @@
             errorMessage.style.display = 'block';
             setTimeout(() => {
                 errorMessage.style.display = 'none';
-            }, 5000);
+            }, 6000);
         }
 
         // Search functionality with debouncing for better performance
